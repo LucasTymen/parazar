@@ -1,0 +1,28 @@
+
+# Ajouter un fichier .gitignore pour exclure les fichiers Python non nécessaires
+echo "__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.pytest_cache/
+htmlcov/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis" > .gitignore__pycache__/
+*.pyc
+*.log
