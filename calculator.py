@@ -217,11 +217,9 @@ class ParazarMatcher:
             email = str(row.get("email", "")).strip().lower()
             first_name = str(row.get("first_name", "")).strip()
             
-            # Validation âge
+            # Validation âge (sans limites)
             try:
                 age = int(float(row.get("age", 0)))
-                if age < 18 or age > 65:
-                    raise ValueError(f"Âge invalide: {age}")
             except (ValueError, TypeError):
                 raise ValueError("Âge invalide")
             
@@ -244,16 +242,16 @@ class ParazarMatcher:
             if experience_date and not validate_date_format(experience_date):
                 raise ValueError(f"Date invalide: {experience_date}")
             
-            # Validation birth_year
+            # Validation birth_year (sans rejet)
             birth_year = row.get("birth_year")
             if birth_year and pd.notna(birth_year):
                 try:
                     birth_year = int(float(birth_year))
                     if abs((datetime.now().year - birth_year) - age) > 1:
-                        raise ValueError("Incohérence âge / année de naissance")
+                        logger.warning(f"Incohérence âge/année de naissance pour {email}: âge={age}, année={birth_year}")
                 except (ValueError, TypeError):
                     pass  # Ignorer les erreurs de conversion birth_year
-                
+            
             # Gestion introverted_degree
             introverted_degree = row.get("introverted_degree", 0.5)
             if introverted_degree is None or not ParticipantValidator.is_valid_float(introverted_degree):
@@ -349,11 +347,13 @@ class ParazarMatcher:
             return MatchingStatus.ERROR, {"error": str(e), "groups": [], "unmatched": participants}
 
     def _segment_participants(self, participants: List[Participant]) -> Dict[str, List[Participant]]:
-        """Segmentation des participants par expérience/date/ville"""
+        """Segmentation des participants par expérience/date/ville/tranche d'âge"""
         segments = defaultdict(list)
         
         for participant in participants:
-            key = f"{participant.experience_name}_{participant.experience_date}_{participant.experience_city}"
+            # Création d'une clé composite incluant la tranche d'âge
+            bucket = self._age_bucket(participant.age)
+            key = f"{participant.experience_name}_{participant.experience_date}_{participant.experience_city}_{bucket}"
             segments[key].append(participant)
         
         return dict(segments)
@@ -771,6 +771,21 @@ class ParazarMatcher:
             return []
         return [t.strip().lower() for t in topics_raw.split(",") if t.strip()]
 
+    def _age_bucket(self, age: int) -> str:
+        """Détermine la tranche d'âge d'un participant"""
+        if age < 18:
+            return "underage"
+        elif age < 30:
+            return "18-29"
+        elif age < 45:
+            return "30-44"
+        elif age < 60:
+            return "45-59"
+        elif age < 75:
+            return "60-74"
+        else:
+            return "75+"
+
 class GroupValidator:
     @staticmethod
     def validate_age_spread(participants: List[Participant], max_spread: int) -> bool:
@@ -924,3 +939,110 @@ def test_calculate_global_stats_empty():
     assert stats["avg_group_size"] == 0
     assert stats["avg_compatibility_score"] == 0
     assert stats["valid_groups"] == 0
+
+def test_age_bucket_segmentation():
+    """Test du regroupement par tranche d'âge"""
+    matcher = ParazarMatcher()
+    participants = [
+        Participant(email="p1@test.com", first_name="P1", gender="F", age=25),
+        Participant(email="p2@test.com", first_name="P2", gender="F", age=35),
+        Participant(email="p3@test.com", first_name="P3", gender="F", age=55),
+        Participant(email="p4@test.com", first_name="P4", gender="F", age=70),
+        Participant(email="p5@test.com", first_name="P5", gender="M", age=28),
+        Participant(email="p6@test.com", first_name="P6", gender="M", age=40),
+        Participant(email="p7@test.com", first_name="P7", gender="M", age=58),
+        Participant(email="p8@test.com", first_name="P8", gender="M", age=75)
+    ]
+    
+    segments = matcher._segment_participants(participants)
+    
+    # Vérifier que les segments sont créés correctement
+    assert len(segments) == 4  # Une tranche d'âge par groupe
+    
+    # Vérifier que les participants sont dans les bons segments
+    for key, segment in segments.items():
+        age_bucket = key.split("_")[-1]
+        for participant in segment:
+            if age_bucket == "18-30":
+                assert participant.age < 30
+            elif age_bucket == "31-45":
+                assert 30 <= participant.age < 46
+            elif age_bucket == "46-60":
+                assert 45 <= participant.age < 61
+            else:  # 60+
+                assert participant.age >= 60
+
+def test_mixed_age_groups():
+    """Test de création de groupes avec des âges variés"""
+    matcher = ParazarMatcher()
+    participants = [
+        Participant(email="p1@test.com", first_name="P1", gender="F", age=25),
+        Participant(email="p2@test.com", first_name="P2", gender="F", age=28),
+        Participant(email="p3@test.com", first_name="P3", gender="F", age=72),
+        Participant(email="p4@test.com", first_name="P4", gender="M", age=30),
+        Participant(email="p5@test.com", first_name="P5", gender="M", age=32),
+        Participant(email="p6@test.com", first_name="P6", gender="M", age=68)
+    ]
+    
+    status, results = matcher.create_optimal_groups(participants)
+    assert status in [MatchingStatus.SUCCESS, MatchingStatus.PARTIAL_SUCCESS]
+    assert len(results["groups"]) > 0
+    
+    # Vérifier que les groupes sont valides malgré les écarts d'âge
+    for group in results["groups"]:
+        assert group.is_valid
+        assert len(group.participants) >= matcher.min_group_size
+        assert len(group.participants) <= matcher.max_group_size
+        assert group.gender_balance.get('F', 0) >= matcher.min_females_per_group
+
+def test_age_above_100_is_still_accepted():
+    """Test que les âges extrêmes sont acceptés"""
+    matcher = ParazarMatcher()
+    df = pd.DataFrame([{
+        "name": "Immortel",
+        "email": "immortel@example.com",
+        "gender": "M",
+        "age": 999,
+        "experience_name": "Parazar",
+        "experience_city": "Paris",
+        "experience_date": "2024-06-01"
+    }])
+    participants = matcher.load_from_dataframe(df)
+    assert len(participants) == 1
+    assert participants[0].age == 999
+    assert matcher._age_bucket(participants[0].age) == "75+"
+
+def test_age_bucket_segmentation_extreme():
+    """Test du regroupement par tranche d'âge avec des âges extrêmes"""
+    matcher = ParazarMatcher()
+    participants = [
+        Participant(email="p1@test.com", first_name="P1", gender="F", age=5),  # underage
+        Participant(email="p2@test.com", first_name="P2", gender="F", age=25),  # 18-29
+        Participant(email="p3@test.com", first_name="P3", gender="F", age=35),  # 30-44
+        Participant(email="p4@test.com", first_name="P4", gender="F", age=55),  # 45-59
+        Participant(email="p5@test.com", first_name="P5", gender="F", age=65),  # 60-74
+        Participant(email="p6@test.com", first_name="P6", gender="F", age=85),  # 75+
+        Participant(email="p7@test.com", first_name="P7", gender="F", age=1500)  # 75+
+    ]
+    
+    segments = matcher._segment_participants(participants)
+    
+    # Vérifier que les segments sont créés correctement
+    assert len(segments) == 6  # Une tranche d'âge par groupe
+    
+    # Vérifier que les participants sont dans les bons segments
+    for key, segment in segments.items():
+        age_bucket = key.split("_")[-1]
+        for participant in segment:
+            if age_bucket == "underage":
+                assert participant.age < 18
+            elif age_bucket == "18-29":
+                assert 18 <= participant.age < 30
+            elif age_bucket == "30-44":
+                assert 30 <= participant.age < 45
+            elif age_bucket == "45-59":
+                assert 45 <= participant.age < 60
+            elif age_bucket == "60-74":
+                assert 60 <= participant.age < 75
+            else:  # 75+
+                assert participant.age >= 75
