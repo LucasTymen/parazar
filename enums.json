@@ -1,0 +1,11 @@
+{
+  "sujets_préférés": ["actualités", "relations", "culture", "société", "spiritualité", "autres"],
+  "type_personnalité": ["extraverti", "introverti"],
+  "fréquence_sorties": ["jamais", "parfois", "souvent", "tout le temps"],
+  "temps_libre": ["seul", "avec amis", "peu importe"],
+  "priorités_vie": ["famille", "carrière", "argent", "bonheur", "santé", "autre"],
+  "budget_sortie": ["moins de 10€", "10-30€", "30-50€", "plus de 50€"],
+  "activités_rencontre": ["sport", "jeux", "balade", "café", "culture", "autre"],
+  "jours_disponibles": ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"],
+  "aime_sport": ["oui", "non"]
+} 

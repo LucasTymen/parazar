@@ -3,6 +3,10 @@ import json
 from typing import List, Dict, Set, Tuple
 from itertools import combinations
 import os
+import logging
+
+# --- Setup logging ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 # --- Chargement des données ---
 PARTICIPANTS_CSV = "participants.csv"  # À adapter si besoin
@@ -24,6 +28,28 @@ def save_json(filename, data):
 history = set(tuple(sorted(pair)) for pair in load_json("history.json", []))
 manual_matches = [tuple(sorted(pair)) for pair in load_json("manual_matches.json", [])]
 custom_groups = load_json("custom_groups.json", [])
+
+# --- Chargement des ENUMs dynamiques ---
+ENUMS = load_json("enums.json", {})
+
+def validate_enum(field, value):
+    if field in ENUMS:
+        if isinstance(value, list):
+            return all(v in ENUMS[field] for v in value)
+        else:
+            return value in ENUMS[field]
+    return True
+
+# --- Chargement consentements mutuels ---
+consentements = load_json("consentements.json", [])
+consent_dict = {}
+for c in consentements:
+    key = tuple(sorted([c["id1"], c["id2"]]))
+    consent_dict[key] = c["consent"]
+
+def has_mutual_consent(id1, id2):
+    key = tuple(sorted([id1, id2]))
+    return consent_dict.get(key, None)
 
 def compute_score(p1: Dict, p2: Dict) -> int:
     score = 0
@@ -75,7 +101,15 @@ for pair in manual_matches:
 
 # 3. Groupes restants par matching
 def can_group(pids: List[int], history: Set[Tuple[int, int]]) -> bool:
-    return all(tuple(sorted((a, b))) not in history for a, b in combinations(pids, 2))
+    for a, b in combinations(pids, 2):
+        if tuple(sorted((a, b))) in history:
+            logging.info(f"Refus: {a} et {b} déjà groupés (historique)")
+            return False
+        consent = has_mutual_consent(a, b)
+        if consent is False:
+            logging.info(f"Refus: {a} et {b} ont refusé d'être ensemble (consentement)")
+            return False
+    return True
 
 def create_groups(df, used_ids, group_size=4):
     participants = [p for p in df.to_dict(orient="records") if p["id"] not in used_ids]
@@ -108,6 +142,9 @@ def create_groups(df, used_ids, group_size=4):
             for pid in group:
                 if pid in ungrouped:
                     ungrouped.remove(pid)
+            logging.info(f"Groupe {gid} créé avec membres {group}")
+        else:
+            logging.warning(f"Impossible de créer un groupe complet à partir de {seed}")
     return groups
 
 groups = create_groups(df, used_ids)
@@ -116,7 +153,7 @@ groups = create_groups(df, used_ids)
 def replace_in_group(groups, group_id, leaving_id, df, history):
     group = groups[group_id]
     if leaving_id not in group:
-        print("Participant non présent dans ce groupe.")
+        logging.warning(f"Participant {leaving_id} non présent dans le groupe {group_id}.")
         return
     group.remove(leaving_id)
     all_grouped = set(pid for g in groups.values() for pid in g)
@@ -126,6 +163,8 @@ def replace_in_group(groups, group_id, leaving_id, df, history):
     best_id = None
     for cid in candidates:
         if any(tuple(sorted((cid, mid))) in history for mid in group):
+            continue
+        if any(has_mutual_consent(cid, mid) is False for mid in group):
             continue
         scores = []
         cand = df.loc[df["id"] == cid].to_dict(orient="records")[0]
@@ -140,9 +179,9 @@ def replace_in_group(groups, group_id, leaving_id, df, history):
         group.append(best_id)
         for mid in group:
             history.add(tuple(sorted((best_id, mid))))
-        print(f"Participant {best_id} remplace {leaving_id} dans le groupe {group_id}")
+        logging.info(f"Participant {best_id} remplace {leaving_id} dans le groupe {group_id}")
     else:
-        print("Aucun remplaçant trouvé.")
+        logging.warning(f"Aucun remplaçant trouvé pour {leaving_id} dans le groupe {group_id}.")
 
 # --- Export ---
 save_json("output_groups.json", groups)

@@ -3,6 +3,9 @@
 import re
 from datetime import datetime
 from typing import Any, Optional, Union
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 class ParticipantValidator:
     """Classe utilitaire pour la validation des participants."""
@@ -143,4 +146,6 @@ def clean_topics(topics: Union[str, list, None]) -> list:
     if isinstance(topics, str):
         topics = topics.split(',')
         
-    return [x.strip().lower() for x in topics if x and str(x).strip().lower() not in ['nan', 'none', '']] 
+    return [x.strip().lower() for x in topics if x and str(x).strip().lower() not in ['nan', 'none', '']]
+
+    # logging.info(f"Groupe {gid} créé avec membres {group} (scores: {scores})")
