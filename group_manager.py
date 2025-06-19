@@ -4,6 +4,8 @@ from typing import List, Dict, Set, Tuple
 from itertools import combinations
 import os
 import logging
+from parazar.validators.participant_validator import ParticipantValidator
+from parazar.validators.email_validator import EmailValidator
 
 # --- Setup logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -14,23 +16,28 @@ df = pd.read_csv(PARTICIPANTS_CSV)
 df['id'] = df.index
 
 # --- Fonctions utilitaires pour JSON ---
-def load_json(filename, default):
-    if os.path.exists(filename):
+def safe_load_json(filename, default, expected_type=None):
+    try:
         with open(filename, "r") as f:
-            return json.load(f)
-    return default
+            data = json.load(f)
+        if expected_type and not isinstance(data, expected_type):
+            raise ValueError(f"Type inattendu dans {filename}")
+        return data
+    except Exception as e:
+        logging.error(f"Erreur chargement {filename}: {e}")
+        return default
 
 def save_json(filename, data):
     with open(filename, "w") as f:
         json.dump(data, f, indent=2)
 
 # --- Chargement des fichiers annexes ---
-history = set(tuple(sorted(pair)) for pair in load_json("history.json", []))
-manual_matches = [tuple(sorted(pair)) for pair in load_json("manual_matches.json", [])]
-custom_groups = load_json("custom_groups.json", [])
+history = set(tuple(sorted(pair)) for pair in safe_load_json("history.json", []))
+manual_matches = [tuple(sorted(pair)) for pair in safe_load_json("manual_matches.json", [])]
+custom_groups = safe_load_json("custom_groups.json", [])
 
 # --- Chargement des ENUMs dynamiques ---
-ENUMS = load_json("enums.json", {})
+ENUMS = safe_load_json("enums.json", {})
 
 def validate_enum(field, value):
     if field in ENUMS:
@@ -41,7 +48,7 @@ def validate_enum(field, value):
     return True
 
 # --- Chargement consentements mutuels ---
-consentements = load_json("consentements.json", [])
+consentements = safe_load_json("consentements.json", [])
 consent_dict = {}
 for c in consentements:
     key = tuple(sorted([c["id1"], c["id2"]]))
@@ -199,4 +206,14 @@ if __name__ == "__main__":
     replace_in_group(groups, gid, leave_id, df, history)
     print("\nGroupes après remplacement :")
     for gid, members in groups.items():
-        print(f"Groupe {gid}: {members}") 
+        print(f"Groupe {gid}: {members}")
+
+    # Exemple de validation d'email sur un participant
+    participant = groups[gid][0] if isinstance(groups[gid], list) else groups[gid]
+    email = participant.get('email') if isinstance(participant, dict) else getattr(participant, 'email', None)
+    valid, err = EmailValidator.validate(email or '')
+    if not valid:
+        raise ValueError(f"Email invalide: {email} ({err})")
+
+    def ma_fonction():
+        pass 
